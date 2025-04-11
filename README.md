@@ -106,7 +106,7 @@ This is a solo R&D project for now, but open collaboration may come in the futur
 
 ## 📖 References
 
-- [AlphaZero Paper (DeepMind)]([https://deepmind.com/research/highlighted-research/alphazero](https://deepmind.google/discover/blog/alphazero-shedding-new-light-on-chess-shogi-and-go/))
+- [AlphaZero Paper (DeepMind)](https://deepmind.google/discover/blog/alphazero-shedding-new-light-on-chess-shogi-and-go/)
 - [python-chess Documentation](https://python-chess.readthedocs.io/en/latest/)
 - [Reinforcement Learning: Sutton & Barto](http://incompleteideas.net/book/RLbook2020.pdf)
 
