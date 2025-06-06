@@ -5,7 +5,7 @@ Thanks for your interest in helping build this AI chess engine!
 ## Getting Started
 
 1. Clone the repo and install dependencies:
-   `git clone https://github.com/imaddde867/InfiniteChessAI.git`
+`git clone https://github.com/imaddde867/InfiniteChessAI.git`
 3. Pick a task from GitHub Projects or Issues
 4. Create a new branch:  
    `git checkout -b feature/random-move-engine`
