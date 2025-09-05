@@ -1,439 +1,236 @@
+//
+//  MinimalChess.swift
+//  iOS 17+, SwiftUI 5
+//
+
 import SwiftUI
 
-// MARK: - Chess Piece Model
-struct ChessPiece: Identifiable, Equatable {
+// MARK: - Domain
+struct Position: Hashable { var row: Int; var col: Int }
+
+enum Player { case white, black }
+enum Kind: String, CaseIterable { case pawn, knight, bishop, rook, queen, king }
+
+struct Piece: Identifiable, Hashable {
     let id = UUID()
-    let type: PieceType
-    let color: PieceColor
-    var position: ChessPosition
+    let player: Player
+    let kind: Kind
+    var pos: Position
     
-    enum PieceType: String, CaseIterable {
-        case king = "♔"
-        case queen = "♕"
-        case rook = "♖"
-        case bishop = "♗"
-        case knight = "♘"
-        case pawn = "♙"
-    }
-    
-    enum PieceColor {
-        case white, black
-    }
-    
-    var symbol: String {
-        switch (type, color) {
-        case (.king, .white): return "♔"
-        case (.king, .black): return "♚"
-        case (.queen, .white): return "♕"
-        case (.queen, .black): return "♛"
-        case (.rook, .white): return "♖"
-        case (.rook, .black): return "♜"
-        case (.bishop, .white): return "♗"
-        case (.bishop, .black): return "♝"
-        case (.knight, .white): return "♘"
-        case (.knight, .black): return "♞"
-        case (.pawn, .white): return "♙"
-        case (.pawn, .black): return "♟"
+    var glyph: String {
+        switch (player, kind) {
+        case (.white, .king): "♔"; case (.black, .king): "♚"
+        case (.white, .queen): "♕"; case (.black, .queen): "♛"
+        case (.white, .rook): "♖"; case (.black, .rook): "♜"
+        case (.white, .bishop): "♗"; case (.black, .bishop): "♝"
+        case (.white, .knight): "♘"; case (.black, .knight): "♞"
+        case (.white, .pawn): "♙"; case (.black, .pawn): "♟"
         }
     }
 }
 
-// MARK: - Chess Position
-struct ChessPosition: Equatable {
-    let row: Int
-    let col: Int
+// MARK: - Board & Rules
+@MainActor
+final class Board: ObservableObject {
+    @Published private(set) var pieces: [Piece] = []
+    @Published private(set) var turn: Player = .white
+    @Published private(set) var selected: Piece?
+    @Published private(set) var highlights: Set<Position> = []
     
-    init(row: Int, col: Int) {
-        self.row = row
-        self.col = col
-    }
+    init() { reset() }
     
-    init?(notation: String) {
-        guard notation.count == 2,
-              let file = notation.first,
-              let rank = notation.last,
-              let col = "abcdefgh".firstIndex(of: file),
-              let row = Int(String(rank)) else {
-            return nil
-        }
-        self.col = "abcdefgh".distance(from: "abcdefgh".startIndex, to: col)
-        self.row = 8 - row
-    }
-    
-    var notation: String {
-        let files = "abcdefgh"
-        let fileIndex = files.index(files.startIndex, offsetBy: col)
-        let file = files[fileIndex]
-        let rank = 8 - row
-        return "\(file)\(rank)"
-    }
-}
-
-// MARK: - Game State
-class ChessGameState: ObservableObject {
-    @Published var pieces: [ChessPiece] = []
-    @Published var selectedPiece: ChessPiece?
-    @Published var possibleMoves: [ChessPosition] = []
-    @Published var currentPlayer: ChessPiece.PieceColor = .white
-    @Published var gameStatus: GameStatus = .active
-    @Published var moveHistory: [String] = []
-    
-    enum GameStatus {
-        case active
-        case check
-        case checkmate
-        case stalemate
-        case draw
-    }
-    
-    init() {
-        setupInitialPosition()
-    }
-    
-    private func setupInitialPosition() {
-        pieces = [
-            // White pieces
-            ChessPiece(type: .rook, color: .white, position: ChessPosition(row: 7, col: 0)),
-            ChessPiece(type: .knight, color: .white, position: ChessPosition(row: 7, col: 1)),
-            ChessPiece(type: .bishop, color: .white, position: ChessPosition(row: 7, col: 2)),
-            ChessPiece(type: .queen, color: .white, position: ChessPosition(row: 7, col: 3)),
-            ChessPiece(type: .king, color: .white, position: ChessPosition(row: 7, col: 4)),
-            ChessPiece(type: .bishop, color: .white, position: ChessPosition(row: 7, col: 5)),
-            ChessPiece(type: .knight, color: .white, position: ChessPosition(row: 7, col: 6)),
-            ChessPiece(type: .rook, color: .white, position: ChessPosition(row: 7, col: 7)),
-        ]
-        
-        // White pawns
-        for col in 0..<8 {
-            pieces.append(ChessPiece(type: .pawn, color: .white, position: ChessPosition(row: 6, col: col)))
-        }
-        
-        // Black pieces
-        pieces.append(contentsOf: [
-            ChessPiece(type: .rook, color: .black, position: ChessPosition(row: 0, col: 0)),
-            ChessPiece(type: .knight, color: .black, position: ChessPosition(row: 0, col: 1)),
-            ChessPiece(type: .bishop, color: .black, position: ChessPosition(row: 0, col: 2)),
-            ChessPiece(type: .queen, color: .black, position: ChessPosition(row: 0, col: 3)),
-            ChessPiece(type: .king, color: .black, position: ChessPosition(row: 0, col: 4)),
-            ChessPiece(type: .bishop, color: .black, position: ChessPosition(row: 0, col: 5)),
-            ChessPiece(type: .knight, color: .black, position: ChessPosition(row: 0, col: 6)),
-            ChessPiece(type: .rook, color: .black, position: ChessPosition(row: 0, col: 7)),
-        ])
-        
-        // Black pawns
-        for col in 0..<8 {
-            pieces.append(ChessPiece(type: .pawn, color: .black, position: ChessPosition(row: 1, col: col)))
+    func tap(at p: Position) {
+        if let sel = selected, highlights.contains(p) { move(sel, to: p); return }
+        deselect()
+        if let piece = pieces.first(where: { $0.pos == p && $0.player == turn }) {
+            selected = piece
+            highlights = legalDestinations(for: piece)
         }
     }
     
-    func pieceAt(position: ChessPosition) -> ChessPiece? {
-        return pieces.first { $0.position == position }
+    func reset() {
+        pieces = Self.startingLineUp()
+        turn = .white
+        deselect()
     }
     
-    func selectPiece(at position: ChessPosition) {
-        if let piece = pieceAt(position: position), piece.color == currentPlayer {
-            selectedPiece = piece
-            possibleMoves = calculatePossibleMoves(for: piece)
-        } else if let selected = selectedPiece, possibleMoves.contains(position) {
-            makeMove(from: selected.position, to: position)
-        } else {
-            deselectPiece()
-        }
+    // MARK: private
+    private func deselect() { selected = nil; highlights = [] }
+    
+    private func move(_ piece: Piece, to p: Position) {
+        pieces.removeAll { $0.pos == p }
+        pieces.replace(piece) { $0.pos = p }
+        turn = turn == .white ? .black : .white
+        deselect()
     }
     
-    func deselectPiece() {
-        selectedPiece = nil
-        possibleMoves = []
-    }
-    
-    private func makeMove(from: ChessPosition, to: ChessPosition) {
-        guard let pieceIndex = pieces.firstIndex(where: { $0.position == from }) else { return }
-        
-        // Remove captured piece if any
-        pieces.removeAll { $0.position == to }
-        
-        // Move the piece
-        pieces[pieceIndex].position = to
-        
-        // Add move to history
-        let notation = "\(from.notation)-\(to.notation)"
-        moveHistory.append(notation)
-        
-        // Switch players
-        currentPlayer = currentPlayer == .white ? .black : .white
-        
-        deselectPiece()
-    }
-    
-    private func calculatePossibleMoves(for piece: ChessPiece) -> [ChessPosition] {
-        // Simplified move calculation - you'll need to implement proper chess rules
-        var moves: [ChessPosition] = []
-        let pos = piece.position
-        
-        switch piece.type {
+    private func legalDestinations(for piece: Piece) -> Set<Position> {
+        var set = Set<Position>()
+        switch piece.kind {
         case .pawn:
-            let direction = piece.color == .white ? -1 : 1
-            let newRow = pos.row + direction
-            if newRow >= 0 && newRow < 8 {
-                let forward = ChessPosition(row: newRow, col: pos.col)
-                if pieceAt(position: forward) == nil {
-                    moves.append(forward)
-                }
-            }
+            let dir = piece.player == .white ? -1 : 1
+            let one = Position(row: piece.pos.row + dir, col: piece.pos.col)
+            if contains(one) && occupant(of: one) == nil { set.insert(one) }
         case .rook:
-            // Horizontal and vertical moves
-            for i in 0..<8 {
-                if i != pos.row {
-                    moves.append(ChessPosition(row: i, col: pos.col))
-                }
-                if i != pos.col {
-                    moves.append(ChessPosition(row: pos.row, col: i))
-                }
-            }
+            for dst in straightLine(from: piece.pos, ΔRow: 1, ΔCol: 0) { set.insert(dst) }
+            for dst in straightLine(from: piece.pos, ΔRow: -1, ΔCol: 0) { set.insert(dst) }
+            for dst in straightLine(from: piece.pos, ΔRow: 0, ΔCol: 1) { set.insert(dst) }
+            for dst in straightLine(from: piece.pos, ΔRow: 0, ΔCol: -1) { set.insert(dst) }
         case .king:
-            // Adjacent squares
-            for rowOffset in -1...1 {
-                for colOffset in -1...1 {
-                    let newRow = pos.row + rowOffset
-                    let newCol = pos.col + colOffset
-                    if newRow >= 0 && newRow < 8 && newCol >= 0 && newCol < 8 && !(rowOffset == 0 && colOffset == 0) {
-                        moves.append(ChessPosition(row: newRow, col: newCol))
-                    }
-                }
-            }
-        default:
-            break
+            for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+                let dst = Position(row: piece.pos.row + dr, col: piece.pos.col + dc)
+                if contains(dst), occupant(of: dst)?.player != piece.player { set.insert(dst) }
+            }}
+        default: break
         }
-        
-        // Filter out moves that would capture own pieces
-        return moves.filter { move in
-            if let targetPiece = pieceAt(position: move) {
-                return targetPiece.color != piece.color
-            }
-            return true
-        }
+        return set
     }
     
-    func resetGame() {
-        pieces.removeAll()
-        selectedPiece = nil
-        possibleMoves = []
-        currentPlayer = .white
-        gameStatus = .active
-        moveHistory = []
-        setupInitialPosition()
+    private func straightLine(from: Position, ΔRow: Int, ΔCol: Int) -> [Position] {
+        var arr: [Position] = [], r = from.row + ΔRow, c = from.col + ΔCol
+        while contains(Position(row: r, col: c)) {
+            let p = Position(row: r, col: c)
+            arr.append(p)
+            if occupant(of: p) != nil { break }
+            r += ΔRow; c += ΔCol
+        }
+        return arr
+    }
+    
+    private func contains(_ p: Position) -> Bool { (0..<8).contains(p.row) && (0..<8).contains(p.col) }
+    private func occupant(of p: Position) -> Piece? { pieces.first { $0.pos == p } }
+    
+    private static func startingLineUp() -> [Piece] {
+        func backRow(_ player: Player, _ row: Int) -> [Piece] {
+            [Kind.rook, .knight, .bishop, .queen, .king, .bishop, .knight, .rook]
+                .enumerated().map { Piece(player: player, kind: $1, pos: Position(row: row, col: $0)) }
+        }
+        func pawnRow(_ player: Player, _ row: Int) -> [Piece] {
+            (0..<8).map { Piece(player: player, kind: .pawn, pos: Position(row: row, col: $0)) }
+        }
+        return backRow(.white, 7) + pawnRow(.white, 6) + pawnRow(.black, 1) + backRow(.black, 0)
     }
 }
 
-// MARK: - Chess Board View
-struct ChessBoardView: View {
-    @StateObject private var gameState = ChessGameState()
-    
+// MARK: - UI
+struct ChessView: View {
+    @StateObject private var board = Board()
     var body: some View {
-        VStack(spacing: 0) {
-            // Game Header
-            HeaderView(gameState: gameState)
-            
-            // Chess Board
+        GeometryReader { geo in
             VStack(spacing: 0) {
-                ForEach(0..<8, id: \.self) { row in
-                    HStack(spacing: 0) {
-                        ForEach(0..<8, id: \.self) { col in
-                            ChessSquareView(
-                                position: ChessPosition(row: row, col: col),
-                                gameState: gameState
-                            )
-                        }
+                header
+                Spacer()
+                boardBody(geo)
+                Spacer()
+                controls
+            }
+            .background(.ultraThinMaterial)
+        }
+        .preferredColorScheme(.dark)
+    }
+    
+    private var header: some View {
+        HStack {
+            Label("Chess", systemImage: "crown.fill").font(.title3.bold())
+            Spacer()
+            TurnIndicator(player: board.turn)
+        }
+        .padding(.horizontal, 24).padding(.vertical, 12)
+    }
+    
+    private func boardBody(_ geo: GeometryProxy) -> some View {
+        let side = min(geo.size.width, geo.size.height) * 0.9
+        return VStack(spacing: 0) {
+            ForEach(0..<8, id: \.self) { row in
+                HStack(spacing: 0) {
+                    ForEach(0..<8, id: \.self) { col in
+                        Square(pos: Position(row: row, col: col))
                     }
                 }
             }
-            .aspectRatio(1, contentMode: .fit)
-            .background(Color.black)
-            .cornerRadius(8)
-            .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
-            
-            // Game Controls
-            ControlsView(gameState: gameState)
         }
-        .padding()
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color(.systemGray6), Color(.systemGray5)]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.2), radius: 10)
+        .environmentObject(board)
+    }
+    
+    private var controls: some View {
+        HStack {
+            Button("New Game") { board.reset() }
+            Spacer()
+            Button("AI Move") { }.disabled(true)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding(.horizontal, 24).padding(.bottom, 8)
     }
 }
 
-// MARK: - Header View
-struct HeaderView: View {
-    @ObservedObject var gameState: ChessGameState
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("iAMbronze Chess AI")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Circle()
-                    .fill(gameState.currentPlayer == .white ? Color.white : Color.black)
-                    .frame(width: 16, height: 16)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.primary, lineWidth: 2)
-                    )
-            }
-            
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Current Turn")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(gameState.currentPlayer == .white ? "White" : "Black")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing) {
-                    Text("Moves")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(gameState.moveHistory.count)")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
-
-// MARK: - Chess Square View
-struct ChessSquareView: View {
-    let position: ChessPosition
-    @ObservedObject var gameState: ChessGameState
-    
-    private var isLightSquare: Bool {
-        (position.row + position.col) % 2 == 0
-    }
-    
-    private var isSelected: Bool {
-        gameState.selectedPiece?.position == position
-    }
-    
-    private var isPossibleMove: Bool {
-        gameState.possibleMoves.contains(position)
-    }
+struct Square: View {
+    let pos: Position
+    @EnvironmentObject private var board: Board
+    private var piece: Piece? { board.pieces.first { $0.pos == pos } }
+    private var isLight: Bool { (pos.row + pos.col).isMultiple(of: 2) }
+    private var isSelected: Bool { board.selected?.pos == pos }
+    private var isHighlight: Bool { board.highlights.contains(pos) }
     
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(squareColor)
-                .aspectRatio(1, contentMode: .fit)
-            
-            if let piece = gameState.pieceAt(position: position) {
-                Text(piece.symbol)
-                    .font(.system(size: 32))
-                    .scaleEffect(isSelected ? 1.1 : 1.0)
-                    .animation(.easeInOut(duration: 0.1), value: isSelected)
-            }
-            
-            if isPossibleMove {
-                Circle()
-                    .fill(Color.green.opacity(0.6))
-                    .frame(width: 12, height: 12)
-            }
+            Color(isLight ? UIColor.systemGray5 : UIColor.systemGray6)
+                .overlay(selectionOverlay)
+            pieceView
+            highlightDot
         }
-        .overlay(
-            Rectangle()
-                .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
-        )
-        .onTapGesture {
-            gameState.selectPiece(at: position)
+        .onTapGesture { board.tap(at: pos) }
+    }
+    
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if isSelected { Color.accentColor.opacity(0.35) }
+    }
+    
+    @ViewBuilder
+    private var pieceView: some View {
+        if let piece {
+            Text(piece.glyph)
+                .font(.system(size: 36))
+                .scaleEffect(isSelected ? 1.15 : 1)
+                .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isSelected)
         }
     }
     
-    private var squareColor: Color {
-        if isSelected {
-            return Color.blue.opacity(0.3)
-        } else if isPossibleMove {
-            return Color.green.opacity(0.2)
-        } else {
-            return isLightSquare ? Color(.systemGray4) : Color(.systemGray2)
+    @ViewBuilder
+    private var highlightDot: some View {
+        if isHighlight && piece == nil {
+            Circle().fill(Color.accentColor).frame(width: 10, height: 10)
         }
     }
 }
 
-// MARK: - Controls View
-struct ControlsView: View {
-    @ObservedObject var gameState: ChessGameState
-    
+struct TurnIndicator: View {
+    let player: Player
     var body: some View {
-        VStack(spacing: 16) {
-            // Game Status
-            HStack {
-                Label("Status: Active", systemImage: "gamecontroller")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Button("AI Move") {
-                    // TODO: Implement AI move
-                    print("AI will make a move here")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
-            
-            // Action Buttons
-            HStack(spacing: 16) {
-                Button("New Game") {
-                    gameState.resetGame()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                
-                Spacer()
-                
-                Button("Undo") {
-                    // TODO: Implement undo
-                    print("Undo move")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .disabled(gameState.moveHistory.isEmpty)
-                
-                Button("Hint") {
-                    // TODO: Implement hint system
-                    print("Show hint")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
+        Circle()
+            .stroke(Color.primary, lineWidth: 2)
+            .background(Circle().fill(player == .white ? Color.white : Color.black))
+            .frame(width: 18, height: 18)
     }
 }
 
-// MARK: - Main App View
-struct ContentView: View {
-    var body: some View {
-        NavigationView {
-            ChessBoardView()
-                .navigationBarHidden(true)
+// MARK: - App
+@main
+struct MinimalChessApp: App {
+    var body: some Scene {
+        WindowGroup { ChessView().ignoresSafeArea(.keyboard) }
+    }
+}
+
+// MARK: - Helper
+extension Array where Element == Piece {
+    fileprivate mutating func replace(_ piece: Piece, _ update: (inout Piece) -> Void) {
+        if let idx = firstIndex(where: { $0.id == piece.id }) {
+            update(&self[idx])
         }
-        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
