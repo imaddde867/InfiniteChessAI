@@ -6,6 +6,15 @@ from transformers import TrainingArguments, Trainer
 import os
 from pathlib import Path
 
+# Set environment variables to avoid mutex issues
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+# Disable MPS backend if it's causing issues
+if torch.backends.mps.is_available():
+    print("MPS backend available but setting to CPU to avoid mutex issues")
+    torch.backends.mps.is_built = False
+
 class ChessDataset(Dataset):
     """Custom dataset class for chess training data"""
     
@@ -72,6 +81,7 @@ def setup_model_and_tokenizer(model_name="microsoft/DialoGPT-medium"):
     print(f"Loading model: {model_name}")
     
     # Load tokenizer
+    print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     
     # Add padding token if it doesn't exist
@@ -79,16 +89,19 @@ def setup_model_and_tokenizer(model_name="microsoft/DialoGPT-medium"):
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
     
-    # Load model
+    # Load model with CPU only to avoid MPS issues
+    print("Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto" if torch.cuda.is_available() else None
+        torch_dtype=torch.float32,  # Use float32 instead of float16
+        device_map=None,  # Load on CPU first
+        trust_remote_code=True
     )
     
     # Resize token embeddings if we added new tokens
     model.resize_token_embeddings(len(tokenizer))
     
+    print("Model and tokenizer loaded successfully!")
     return model, tokenizer
 
 def count_parameters(model):
@@ -105,7 +118,10 @@ class ChessTrainer:
         self.tokenizer = tokenizer
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Use CPU to avoid MPS mutex issues
+        self.device = torch.device("cpu")
+        print(f"Using device: {self.device}")
         
         # Move model to device
         self.model.to(self.device)
@@ -235,12 +251,25 @@ class ChessTrainer:
 def main():
     """Main training function"""
     
+    print("🚀 Starting Chess AI Fine-tuning")
+    print("=" * 60)
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"MPS available: {torch.backends.mps.is_available()}")
+    print(f"CPU cores: {torch.get_num_threads()}")
+    
+    # Check if training data exists
+    if not os.path.exists("sft_data.jsonl"):
+        print("❌ Training data file 'sft_data.jsonl' not found!")
+        print("Please run the notebook first to generate training data.")
+        return
+    
     # Configuration
     CONFIG = {
         'model_name': "microsoft/DialoGPT-medium",  # Start here, upgrade to "meta-llama/Llama-2-7b-chat-hf" later
         'train_data_path': "sft_data.jsonl",
-        'batch_size': 4,  # Adjust based on your 16GB RAM
-        'max_length': 512,
+        'batch_size': 1,  # Reduced batch size to avoid memory issues
+        'max_length': 256,  # Reduced max length
         'num_epochs': 3,
         'learning_rate': 5e-5
     }
