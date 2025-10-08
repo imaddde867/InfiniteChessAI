@@ -1,124 +1,114 @@
 # ♟️ InfiniteChessAI
 
-**InfiniteChessAI** is a Python-based, self-learning chess engine that trains by playing against itself infinitely until challenged by a human. The long-term goal is to create the world's smartest chess engine that learns and improves continuously without human supervision.
+An experiment in building an end-to-end chess experience that spans an iOS board,
+data collection from Chess.com, and (eventually) a self-improving engine. The
+project is currently in a prototyping phase: we now have a SwiftUI board with a
+basic rule engine, Python tooling to generate supervised datasets, and a mock
+AI server so the client can be exercised while the real model is under
+construction.
 
 ---
 
-## 🚀 Vision
+## � Current snapshot (October 2025)
 
-> Create a powerful AI engine that:
-- Plays legal chess games using smart strategies.
-- Trains itself through self-play using reinforcement learning.
-- Continuously evolves its understanding of the game through deep learning.
-- Challenges and beats human players with adaptive intelligence.
-
----
-
-## 📌 Features (Planned Roadmap)
-
-### ✅ Phase 1: Basic Engine Setup
-- [x] Legal move generation using `python-chess`
-- [x] Random-move engine prototype
-
-### 🔄 Phase 2: Classical AI
-- [ ] Minimax with evaluation function
-- [ ] Alpha-beta pruning optimization
-
-### 🧠 Phase 3: Reinforcement Learning
-- [ ] Self-play match history recording
-- [ ] Q-learning or policy gradient exploration
-
-### 🔁 Phase 4: AlphaZero-style Deep Learning
-- [ ] MCTS + Neural Network integration
-- [ ] Policy and value network training
-- [ ] Evaluation against past engine versions
-
-### 🌐 Phase 5: Human Challenge Mode
-- [ ] Web interface for human vs AI
-- [ ] Elo-based ranking system
-- [ ] Optional Stockfish benchmark comparison
+- **SwiftUI board (`ChessAI/`)** – a native iOS app that lets you play as white
+	against an AI operator. Legal move generation has been fleshed out for all
+	pieces and simple SAN parsing is supported for AI moves.
+- **Data tooling (`scripts/`, `main.ipynb`)** – reproducible pipeline that pulls
+	your public Chess.com games and emits prompt/completion pairs for fine-tuning
+	language models.
+- **Mock inference server (`server/mock_ai_server.py`)** – a Flask service that
+	uses `python-chess` to return random legal moves, unblocking UI development
+	until a stronger model is available.
+- **Supervised dataset (`sft_data.jsonl`)** – sample output generated from the
+	notebook/script. Keep regenerating as your game archive grows.
 
 ---
 
-## 🛠️ Technologies
-
-| Tool          | Purpose                             |
-|---------------|-------------------------------------|
-| `python-chess`| Chess rules, board handling         |
-| `PyTorch`     | Deep learning and neural networks   |
-| `NumPy`       | Numerical calculations              |
-| `Flask`       | (Planned) Web interface             |
-| `Ray RLlib`   | (Optional) Reinforcement learning at scale |
-
----
-
-## 📂 Project Structure (To be updated)
+## � Repository layout
 
 ```
-InfiniteChessAI/
-├── engine/             # Core logic of the chess engine
-│   ├── minimax.py
-│   ├── evaluation.py
-│   └── self_play.py
-├── neural_net/         # Deep learning models and training
-│   ├── model.py
-│   └── train.py
-├── interface/          # Human vs AI interface (Web or CLI)
-│   └── play.py
-├── data/               # Saved games, training data
-│   └── games/
-├── utils/              # Helper functions
-│   └── board_utils.py
-├── requirements.txt
+.
+├── ChessAI/                 # SwiftUI front-end
+├── ChessAI.xcodeproj/
+├── ChessAITests/, ChessAIUITests/  # Xcode test targets (placeholders for now)
+├── scripts/
+│   └── generate_chess_sft_dataset.py
+├── server/
+│   └── mock_ai_server.py
+├── main.ipynb              # Exploratory notebook that informed the script
+├── sft_data.jsonl          # Example supervised dataset
+├── requirements.txt        # Python dependencies for scripts/server
 └── README.md
 ```
 
 ---
 
-## 📦 Installation
+## ⚙️ Getting started
+
+### 1. Install Python tooling (optional but recommended)
 
 ```bash
-git clone https://github.com/your-username/InfiniteChessAI.git
-cd InfiniteChessAI
+python -m venv .env
+source .env/bin/activate
 pip install -r requirements.txt
 ```
 
-> ✅ Requires Python 3.8 or later.
+### 2. Generate a supervised dataset
 
----
-
-## 🧪 Running the Engine
-
-Play a basic random move game:
 ```bash
-python engine/random_play.py
+python scripts/generate_chess_sft_dataset.py <chess.com-username> --drop-abandoned
 ```
 
-> More game modes (minimax, self-play, MCTS) coming soon.
+This mirrors the notebook workflow but is now reproducible. It writes a
+JSONL file (default `sft_data.jsonl`) in the repository root.
+
+### 3. Run the mock AI server
+
+```bash
+python server/mock_ai_server.py
+```
+
+The Swift client polls `http://localhost:5000/health` on launch and posts board
+state to `/ai-move`. The mock server responds with random legal SAN moves.
+
+### 4. Launch the iOS app
+
+Open `ChessAI.xcodeproj` in Xcode (17+) and run the **ChessAI** scheme on an
+iOS 17 simulator or device. Ensure the mock server is running for AI moves.
 
 ---
 
-## 💡 Contributing
+## 🧠 Vision & next phases
 
-This is a solo R&D project for now, but open collaboration may come in the future. If you're passionate about AI, chess, or reinforcement learning — feel free to fork and experiment.
+1. **Engine quality** – replace the mock server with a staffed engine that uses
+	 the generated datasets (minimax baseline → policy/value networks → RL).
+2. **Evaluation loop** – automate self-play, rating tracking, and regression
+	 testing against prior checkpoints.
+3. **UX polish** – richer move annotations, game history, difficulty settings,
+	 and cross-platform support.
+
+Refer to `scripts/` and `server/` for current scaffolding; everything is
+intentionally modular to support incremental upgrades.
 
 ---
 
-## 📖 References
+## � References & inspiration
 
-- [AlphaZero Paper (DeepMind)](https://deepmind.google/discover/blog/alphazero-shedding-new-light-on-chess-shogi-and-go/)
-- [python-chess Documentation](https://python-chess.readthedocs.io/en/latest/)
-- [Reinforcement Learning: Sutton & Barto](http://incompleteideas.net/book/RLbook2020.pdf)
+- [python-chess documentation](https://python-chess.readthedocs.io/en/latest/)
+- [AlphaZero paper (DeepMind)](https://deepmind.google/discover/blog/alphazero-shedding-new-light-on-chess-shogi-and-go/)
+- [Hugging Face supervised fine-tuning docs](https://huggingface.co/docs/transformers/main/en/training)
 
 ---
 
-## 🧠 Author
+## 👤 Author
 
 **Imad Eddine El Mouss**  
-🛠️ AI & Data Engineering student | 💭 Building intelligent systems from scratch
+AI & Data Engineering student | Building intelligent systems from scratch
 
 ---
 
-## 📅 Project Status
+## 📅 Status
 
-> 🚧 In early-stage development — follow the journey and witness the evolution of a truly infinite AI.
+Early-stage R&D: the plumbing is now in place, allowing us to iterate on model
+quality and gameplay features with real feedback loops.
