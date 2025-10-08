@@ -1,4 +1,4 @@
-# ♟️ InfiniteChessAI
+# InfiniteChessAI
 
 An experiment in building an end-to-end chess experience that spans an iOS board,
 data collection from Chess.com, and (eventually) a self-improving engine. The
@@ -9,7 +9,7 @@ construction.
 
 ---
 
-## � Current snapshot (October 2025)
+## Current snapshot (October 2025)
 
 - **SwiftUI board (`ChessAI/`)** – a native iOS app that lets you play as white
 	against an AI operator. Legal move generation has been fleshed out for all
@@ -25,7 +25,7 @@ construction.
 
 ---
 
-## � Repository layout
+## Repository layout
 
 ```
 .
@@ -44,7 +44,7 @@ construction.
 
 ---
 
-## ⚙️ Getting started
+## Getting started
 
 ### 1. Install Python tooling (optional but recommended)
 
@@ -79,7 +79,7 @@ iOS 17 simulator or device. Ensure the mock server is running for AI moves.
 
 ---
 
-## 🧠 Vision & next phases
+## Vision & next phases
 
 1. **Engine quality** – replace the mock server with a staffed engine that uses
 	 the generated datasets (minimax baseline → policy/value networks → RL).
@@ -93,22 +93,8 @@ intentionally modular to support incremental upgrades.
 
 ---
 
-## � References & inspiration
+## References & inspiration
 
 - [python-chess documentation](https://python-chess.readthedocs.io/en/latest/)
 - [AlphaZero paper (DeepMind)](https://deepmind.google/discover/blog/alphazero-shedding-new-light-on-chess-shogi-and-go/)
 - [Hugging Face supervised fine-tuning docs](https://huggingface.co/docs/transformers/main/en/training)
-
----
-
-## 👤 Author
-
-**Imad Eddine El Mouss**  
-AI & Data Engineering student | Building intelligent systems from scratch
-
----
-
-## 📅 Status
-
-Early-stage R&D: the plumbing is now in place, allowing us to iterate on model
-quality and gameplay features with real feedback loops.
