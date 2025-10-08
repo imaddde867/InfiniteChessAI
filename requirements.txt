@@ -1,0 +1,4 @@
+flask>=3.0
+pandas>=2.1
+python-chess>=1.999
+requests>=2.31

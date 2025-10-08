@@ -15,7 +15,7 @@ enum Kind: String, CaseIterable { case pawn, knight, bishop, rook, queen, king }
 struct Piece: Identifiable, Hashable {
     let id = UUID()
     let player: Player
-    let kind: Kind
+    var kind: Kind
     var pos: Position
     
     var glyph: String {
@@ -112,13 +112,13 @@ final class Board: ObservableObject {
         // Only allow human player (white) to make moves manually
         guard turn == .white else { return }
         
-        if let sel = selected, highlightƒs.contains(p) { 
+        if let sel = selected, highlights.contains(p) {
             movePiece(sel, to: p)
             // After human move, trigger AI move if it's now black's turn
             if turn == .black {
                 triggerAIMove()
             }
-            return 
+            return
         }
         deselect()
         if let piece = pieces.first(where: { $0.pos == p && $0.player == turn }) {
@@ -133,109 +133,127 @@ final class Board: ObservableObject {
     }
     
     func makeAIMove(_ moveString: String) {
-        // Parse move string and execute it
         lastAIMove = moveString
-        
-        // Clean the move string
-        let cleanMove = moveString.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "+", with: "")
-            .replacingOccurrences(of: "#", with: "")
-        
+        let cleanMove = sanitize(moveString)
+        guard !cleanMove.isEmpty else {
+            makeRandomLegalMove()
+            return
+        }
         print("AI attempting move: \(cleanMove)")
-        
-        // Try to parse different move formats
-        if parsePawnMove(cleanMove) { return }
-        if parsePieceMove(cleanMove) { return }
         if parseCastling(cleanMove) { return }
-        
-        // If all parsing fails, make a random legal move
+        if parsePieceMove(cleanMove) { return }
+        if parsePawnMove(cleanMove) { return }
         makeRandomLegalMove()
     }
     
+    private func sanitize(_ move: String) -> String {
+        move.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "+", with: "")
+            .replacingOccurrences(of: "#", with: "")
+    }
+    
     private func parsePawnMove(_ move: String) -> Bool {
-        // Handle pawn moves like "e4", "d5"
-        guard move.count >= 2,
-              let firstChar = move.first,
-              firstChar.isLetter && firstChar.isLowercase,
-              let secondChar = move.dropFirst().first,
-              secondChar.isNumber else { return false }
-        
-        let col = Int(firstChar.asciiValue! - Character("a").asciiValue!)
-        let row = 8 - Int(String(secondChar))!
-        
-        guard (0..<8).contains(col) && (0..<8).contains(row) else { return false }
-        
-        // Find a pawn that can move to this position
-        if let pawn = pieces.first(where: { 
-            $0.kind == .pawn && 
-            $0.player == turn &&
-            $0.pos.col == col &&
-            canMovePawnTo(pawn: $0, destination: Position(row: row, col: col))
-        }) {
-            movePiece(pawn, to: Position(row: row, col: col))
-            return true
+        guard let firstChar = move.first, firstChar.isLetter else { return false }
+        var trimmed = move
+        var promotion: Kind?
+        if let promoIndex = trimmed.firstIndex(of: "=") {
+            let promoCharIndex = trimmed.index(after: promoIndex)
+            if promoCharIndex < trimmed.endIndex,
+               let kind = kind(fromPromotion: trimmed[promoCharIndex]) {
+                promotion = kind
+            }
+            trimmed = String(trimmed[..<promoIndex])
         }
         
+        let isCapture = trimmed.contains("x")
+        if isCapture {
+            return parsePawnCapture(trimmed, promotion: promotion)
+        } else {
+            return parsePawnAdvance(trimmed, promotion: promotion)
+        }
+    }
+    
+    private func parsePawnAdvance(_ move: String, promotion: Kind?) -> Bool {
+        guard move.count >= 2,
+              let fileChar = move.first,
+              let rankChar = move.last,
+              let col = fileIndex(from: fileChar),
+              let row = rankIndex(from: rankChar) else { return false }
+        let target = Position(row: row, col: col)
+        let candidates = pieces.filter { $0.player == turn && $0.kind == .pawn && $0.pos.col == col }
+        for pawn in candidates where legalDestinations(for: pawn).contains(target) {
+            movePiece(pawn, to: target, promoteTo: promotion)
+            return true
+        }
+        return false
+    }
+    
+    private func parsePawnCapture(_ move: String, promotion: Kind?) -> Bool {
+        // Example formats: exd5, gxe4
+        guard move.count >= 4,
+              let sourceFileChar = move.first,
+              let sourceCol = fileIndex(from: sourceFileChar) else { return false }
+        let destinationPart = move.split(separator: "x", maxSplits: 1, omittingEmptySubsequences: true).last ?? ""
+        guard destinationPart.count >= 2,
+              let fileChar = destinationPart.last(where: { $0.isLetter }),
+              let rankChar = destinationPart.last,
+              let destCol = fileIndex(from: fileChar),
+              let destRow = rankIndex(from: rankChar) else { return false }
+        let target = Position(row: destRow, col: destCol)
+        let candidates = pieces.filter {
+            $0.player == turn && $0.kind == .pawn && $0.pos.col == sourceCol
+        }
+        for pawn in candidates where legalDestinations(for: pawn).contains(target) {
+            movePiece(pawn, to: target, promoteTo: promotion)
+            return true
+        }
         return false
     }
     
     private func parsePieceMove(_ move: String) -> Bool {
-        // Handle piece moves like "Nf3", "Bb5", etc.
-        guard move.count >= 3,
-              let pieceChar = move.first,
-              "KQRBN".contains(pieceChar) else { return false }
-        
-        let pieceKind: Kind
-        switch pieceChar {
-        case "K": pieceKind = .king
-        case "Q": pieceKind = .queen
-        case "R": pieceKind = .rook
-        case "B": pieceKind = .bishop
-        case "N": pieceKind = .knight
-        default: return false
+        guard let pieceChar = move.first,
+              let pieceKind = kind(fromPieceNotation: pieceChar) else { return false }
+        var remainder = String(move.dropFirst())
+        var isCapture = false
+        if let captureIndex = remainder.firstIndex(of: "x") {
+            isCapture = true
+            remainder.remove(at: captureIndex)
         }
-        
-        let destination = String(move.dropFirst())
-        guard destination.count >= 2,
-              let fileChar = destination.first,
-              let rankChar = destination.dropFirst().first,
-              fileChar.isLetter && fileChar.isLowercase,
-              rankChar.isNumber else { return false }
-        
-        let col = Int(fileChar.asciiValue! - Character("a").asciiValue!)
-        let row = 8 - Int(String(rankChar))!
-        
-        guard (0..<8).contains(col) && (0..<8).contains(row) else { return false }
-        
-        let targetPos = Position(row: row, col: col)
-        
-        // Find the piece that can move to this position
-        if let piece = pieces.first(where: { 
-            $0.kind == pieceKind && 
-            $0.player == turn &&
-            legalDestinations(for: $0).contains(targetPos)
-        }) {
-            movePiece(piece, to: targetPos)
+      guard remainder.count >= 2 else { return false }
+      let destinationPart = String(remainder.suffix(2))
+      guard let fileChar = destinationPart.first,
+          let rankChar = destinationPart.last,
+          let col = fileIndex(from: fileChar),
+          let row = rankIndex(from: rankChar) else { return false }
+      let destination = Position(row: row, col: col)
+      let disambiguation = String(remainder.dropLast(2))
+        var candidates = pieces.filter { $0.player == turn && $0.kind == pieceKind }
+        if !disambiguation.isEmpty {
+            for char in disambiguation {
+                if char.isLetter, let expectedCol = fileIndex(from: char) {
+                    candidates = candidates.filter { $0.pos.col == expectedCol }
+                } else if char.isNumber, let expectedRow = rankIndex(from: char) {
+                    candidates = candidates.filter { $0.pos.row == expectedRow }
+                }
+            }
+        }
+        candidates = candidates.filter { legalDestinations(for: $0).contains(destination) }
+        if isCapture, occupantsPlayer(at: destination) == turn { return false }
+        if let piece = candidates.first {
+            movePiece(piece, to: destination)
             return true
         }
-        
         return false
     }
     
     private func parseCastling(_ move: String) -> Bool {
-        // Handle castling moves "O-O" (kingside) or "O-O-O" (queenside)
         guard move == "O-O" || move == "O-O-O" else { return false }
-        
-        // For now, just return false - castling is complex to implement
-        // In a full implementation, you'd check if castling is legal and execute it
+        // Castling not yet supported.
         return false
     }
     
     private func makeRandomLegalMove() {
-        // Find all pieces of the current player
-        let playerPieces = pieces.filter { $0.player == turn }
-        
-        // Find all legal moves
+        let playerPieces = pieces.filter { $0.player == turn }.shuffled()
         for piece in playerPieces {
             let destinations = legalDestinations(for: piece)
             if let randomDestination = destinations.randomElement() {
@@ -243,28 +261,7 @@ final class Board: ObservableObject {
                 return
             }
         }
-        
-        // If no legal moves found, just pass the turn
         turn = turn == .white ? .black : .white
-    }
-    
-    private func canMovePawnTo(pawn: Piece, destination: Position) -> Bool {
-        let direction = pawn.player == .white ? -1 : 1
-        let oneStep = Position(row: pawn.pos.row + direction, col: pawn.pos.col)
-        let twoStep = Position(row: pawn.pos.row + 2 * direction, col: pawn.pos.col)
-        
-        // Check if destination is one step forward and empty
-        if destination == oneStep && occupant(of: destination) == nil {
-            return true
-        }
-        
-        // Check if destination is two steps forward (from starting position) and empty
-        let startingRow = pawn.player == .white ? 6 : 1
-        if pawn.pos.row == startingRow && destination == twoStep && occupant(of: destination) == nil {
-            return true
-        }
-        
-        return false
     }
     
     func reset() {
@@ -277,48 +274,142 @@ final class Board: ObservableObject {
     // MARK: private
     private func deselect() { selected = nil; highlights = [] }
     
-    private func movePiece(_ piece: Piece, to p: Position) {
-        pieces.removeAll { $0.pos == p }
-        pieces.replace(piece) { $0.pos = p }
+    private func movePiece(_ piece: Piece, to p: Position, promoteTo: Kind? = nil) {
+        if let captureIndex = pieces.firstIndex(where: { $0.pos == p }) {
+            guard pieces[captureIndex].player != piece.player else { return }
+            pieces.remove(at: captureIndex)
+        }
+        pieces.replace(piece) {
+            $0.pos = p
+            if let promoteTo { $0.kind = promoteTo }
+        }
         turn = turn == .white ? .black : .white
         deselect()
     }
     
     private func legalDestinations(for piece: Piece) -> Set<Position> {
-        var set = Set<Position>()
         switch piece.kind {
         case .pawn:
-            let dir = piece.player == .white ? -1 : 1
-            let one = Position(row: piece.pos.row + dir, col: piece.pos.col)
-            if contains(one) && occupant(of: one) == nil { set.insert(one) }
+            return pawnDestinations(for: piece)
         case .rook:
-            for dst in straightLine(from: piece.pos, ΔRow: 1, ΔCol: 0) { set.insert(dst) }
-            for dst in straightLine(from: piece.pos, ΔRow: -1, ΔCol: 0) { set.insert(dst) }
-            for dst in straightLine(from: piece.pos, ΔRow: 0, ΔCol: 1) { set.insert(dst) }
-            for dst in straightLine(from: piece.pos, ΔRow: 0, ΔCol: -1) { set.insert(dst) }
+            return Set(slidingMoves(from: piece.pos, directions: [(1, 0), (-1, 0), (0, 1), (0, -1)], for: piece))
+        case .bishop:
+            return Set(slidingMoves(from: piece.pos, directions: [(1, 1), (1, -1), (-1, 1), (-1, -1)], for: piece))
+        case .queen:
+            return Set(slidingMoves(from: piece.pos,
+                                     directions: [(1, 0), (-1, 0), (0, 1), (0, -1),
+                                                  (1, 1), (1, -1), (-1, 1), (-1, -1)],
+                                     for: piece))
+        case .knight:
+            let offsets = [(2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -1), (-1, -2), (1, -2), (2, -1)]
+            var moves: Set<Position> = []
+            for (dr, dc) in offsets {
+                let destination = Position(row: piece.pos.row + dr, col: piece.pos.col + dc)
+                guard contains(destination) else { continue }
+                if let occupant = occupant(of: destination) {
+                    if occupant.player != piece.player { moves.insert(destination) }
+                } else {
+                    moves.insert(destination)
+                }
+            }
+            return moves
         case .king:
-            for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
-                let dst = Position(row: piece.pos.row + dr, col: piece.pos.col + dc)
-                if contains(dst), occupant(of: dst)?.player != piece.player { set.insert(dst) }
-            }}
-        default: break
+            var moves: Set<Position> = []
+            for dr in -1...1 {
+                for dc in -1...1 where dr != 0 || dc != 0 {
+                    let destination = Position(row: piece.pos.row + dr, col: piece.pos.col + dc)
+                    guard contains(destination) else { continue }
+                    if let occupant = occupant(of: destination) {
+                        if occupant.player != piece.player { moves.insert(destination) }
+                    } else {
+                        moves.insert(destination)
+                    }
+                }
+            }
+            return moves
         }
-        return set
     }
     
-    private func straightLine(from: Position, ΔRow: Int, ΔCol: Int) -> [Position] {
-        var arr: [Position] = [], r = from.row + ΔRow, c = from.col + ΔCol
-        while contains(Position(row: r, col: c)) {
-            let p = Position(row: r, col: c)
-            arr.append(p)
-            if occupant(of: p) != nil { break }
-            r += ΔRow; c += ΔCol
+    private func pawnDestinations(for piece: Piece) -> Set<Position> {
+        var moves: Set<Position> = []
+        let direction = piece.player == .white ? -1 : 1
+        let startRow = piece.player == .white ? 6 : 1
+        let oneForward = Position(row: piece.pos.row + direction, col: piece.pos.col)
+        if contains(oneForward) && occupant(of: oneForward) == nil {
+            moves.insert(oneForward)
+            let twoForward = Position(row: piece.pos.row + 2 * direction, col: piece.pos.col)
+            if piece.pos.row == startRow && occupant(of: twoForward) == nil {
+                moves.insert(twoForward)
+            }
         }
-        return arr
+        for deltaCol in [-1, 1] {
+            let capturePos = Position(row: piece.pos.row + direction, col: piece.pos.col + deltaCol)
+            guard contains(capturePos), let target = occupant(of: capturePos) else { continue }
+            if target.player != piece.player {
+                moves.insert(capturePos)
+            }
+        }
+        return moves
+    }
+    
+    private func slidingMoves(from start: Position, directions: [(Int, Int)], for piece: Piece) -> [Position] {
+        var positions: [Position] = []
+        for (dr, dc) in directions {
+            var row = start.row + dr
+            var col = start.col + dc
+            while contains(Position(row: row, col: col)) {
+                let destination = Position(row: row, col: col)
+                if let occupant = occupant(of: destination) {
+                    if occupant.player != piece.player {
+                        positions.append(destination)
+                    }
+                    break
+                } else {
+                    positions.append(destination)
+                }
+                row += dr
+                col += dc
+            }
+        }
+        return positions
     }
     
     private func contains(_ p: Position) -> Bool { (0..<8).contains(p.row) && (0..<8).contains(p.col) }
     private func occupant(of p: Position) -> Piece? { pieces.first { $0.pos == p } }
+    private func occupantsPlayer(at position: Position) -> Player? { occupant(of: position)?.player }
+    
+    private func fileIndex(from char: Character) -> Int? {
+        guard let ascii = char.asciiValue else { return nil }
+        let index = Int(ascii - Character("a").asciiValue!)
+        return (0..<8).contains(index) ? index : nil
+    }
+    
+    private func rankIndex(from char: Character) -> Int? {
+        guard let value = Int(String(char)) else { return nil }
+        let index = 8 - value
+        return (0..<8).contains(index) ? index : nil
+    }
+    
+    private func kind(fromPieceNotation char: Character) -> Kind? {
+        switch char {
+        case "K": return .king
+        case "Q": return .queen
+        case "R": return .rook
+        case "B": return .bishop
+        case "N": return .knight
+        default: return nil
+        }
+    }
+    
+    private func kind(fromPromotion char: Character) -> Kind? {
+        switch char {
+        case "Q": return .queen
+        case "R": return .rook
+        case "B": return .bishop
+        case "N": return .knight
+        default: return nil
+        }
+    }
     
     private static func startingLineUp() -> [Piece] {
         func backRow(_ player: Player, _ row: Int) -> [Piece] {
