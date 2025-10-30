@@ -41,7 +41,10 @@ class ChessAIService: ObservableObject {
         defer { Task { @MainActor in isThinking = false } }
         
         do {
-            guard let url = URL(string: "\(serverURL)/ai-move") else { return nil }
+            guard let url = URL(string: "\(serverURL)/ai-move") else {
+                await MainActor.run { lastError = "Invalid server URL" }
+                return nil
+            }
             
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -65,14 +68,29 @@ class ChessAIService: ObservableObject {
             
             request.httpBody = try JSONSerialization.data(withJSONObject: boardData)
             
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
             
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let success = json["success"] as? Bool,
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                await MainActor.run {
+                    lastError = "Server error (\(httpResponse.statusCode))"
+                }
+                return nil
+            }
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                await MainActor.run { lastError = "Malformed AI response" }
+                return nil
+            }
+            
+            if let success = json["success"] as? Bool,
                success,
                let move = json["move"] as? String {
                 await MainActor.run { lastError = nil }
                 return move
+            } else {
+                let message = json["error"] as? String ?? "AI response missing move"
+                await MainActor.run { lastError = message }
             }
             
         } catch {
@@ -84,15 +102,20 @@ class ChessAIService: ObservableObject {
     
     func checkServerHealth() async -> Bool {
         do {
-            guard let url = URL(string: "\(serverURL)/health") else { return false }
+            guard let url = URL(string: "\(serverURL)/health") else {
+                await MainActor.run { lastError = "Invalid server URL" }
+                return false
+            }
             let (data, _) = try await URLSession.shared.data(from: url)
             
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let status = json["status"] as? String {
-                return status == "healthy"
+                let healthy = status == "healthy"
+                await MainActor.run { lastError = healthy ? nil : "AI server unreachable" }
+                return healthy
             }
         } catch {
-            print("Health check failed: \(error)")
+            await MainActor.run { lastError = error.localizedDescription }
         }
         return false
     }
@@ -200,10 +223,12 @@ final class Board: ObservableObject {
               let destCol = fileIndex(from: fileChar),
               let destRow = rankIndex(from: rankChar) else { return false }
         let target = Position(row: destRow, col: destCol)
+        guard let capturedPiece = occupant(of: target) else { return false }
         let candidates = pieces.filter {
             $0.player == turn && $0.kind == .pawn && $0.pos.col == sourceCol
         }
         for pawn in candidates where legalDestinations(for: pawn).contains(target) {
+            guard capturedPiece.player != pawn.player else { continue }
             movePiece(pawn, to: target, promoteTo: promotion)
             return true
         }
@@ -219,14 +244,14 @@ final class Board: ObservableObject {
             isCapture = true
             remainder.remove(at: captureIndex)
         }
-      guard remainder.count >= 2 else { return false }
-      let destinationPart = String(remainder.suffix(2))
-      guard let fileChar = destinationPart.first,
-          let rankChar = destinationPart.last,
-          let col = fileIndex(from: fileChar),
-          let row = rankIndex(from: rankChar) else { return false }
-      let destination = Position(row: row, col: col)
-      let disambiguation = String(remainder.dropLast(2))
+        guard remainder.count >= 2 else { return false }
+        let destinationPart = String(remainder.suffix(2))
+        guard let fileChar = destinationPart.first,
+              let rankChar = destinationPart.last,
+              let col = fileIndex(from: fileChar),
+              let row = rankIndex(from: rankChar) else { return false }
+        let destination = Position(row: row, col: col)
+        let disambiguation = String(remainder.dropLast(2))
         var candidates = pieces.filter { $0.player == turn && $0.kind == pieceKind }
         if !disambiguation.isEmpty {
             for char in disambiguation {
@@ -238,8 +263,12 @@ final class Board: ObservableObject {
             }
         }
         candidates = candidates.filter { legalDestinations(for: $0).contains(destination) }
-        if isCapture, occupantsPlayer(at: destination) == turn { return false }
-        if let piece = candidates.first {
+        for piece in candidates {
+            if isCapture {
+                guard let target = occupant(of: destination), target.player != piece.player else { continue }
+            } else if let target = occupant(of: destination), target.player == piece.player {
+                continue
+            }
             movePiece(piece, to: destination)
             return true
         }
@@ -456,6 +485,10 @@ struct ChessView: View {
                             await MainActor.run {
                                 board.makeAIMove(move)
                             }
+                        } else {
+                            await MainActor.run {
+                                board.aiEnabled = false
+                            }
                         }
                     }
                 }
@@ -476,7 +509,12 @@ struct ChessView: View {
             .font(.caption)
             .padding(.horizontal, 24)
             
-            if let lastMove = board.lastAIMove {
+            if let error = aiService.lastError {
+                Text("AI error: \(error)")
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .multilineTextAlignment(.leading)
+            } else if let lastMove = board.lastAIMove {
                 Text("AI played: \(lastMove)")
                     .font(.caption2)
                     .foregroundColor(.secondary)

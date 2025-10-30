@@ -135,12 +135,18 @@ def build_training_examples(df: pd.DataFrame, username: str) -> List[TrainingExa
             continue
 
         color = "white" if row.get("White") == username else "black"
-        for move_number, move in enumerate(own_moves, start=1):
+        for index, move in enumerate(own_moves):
+            move_number = index + 1
+            my_previous = own_moves[:index]
+            if color == "white":
+                opponent_previous = opp_moves[:index]
+            else:
+                opponent_previous = opp_moves[: index + 1]
             example = TrainingExample(
                 game_id=str(game_id),
                 move_number=move_number,
-                my_previous_moves=own_moves[: move_number - 1],
-                opponent_previous_moves=opp_moves[: move_number - 1],
+                my_previous_moves=my_previous,
+                opponent_previous_moves=opponent_previous,
                 my_move=move,
                 time_control=row.get("TimeControl", ""),
                 opening=row.get("ECO", ""),
@@ -153,8 +159,12 @@ def build_training_examples(df: pd.DataFrame, username: str) -> List[TrainingExa
 def moves_to_history(my_prev: Sequence[str], opp_prev: Sequence[str], color: str) -> str:
     history: List[str] = []
     for index in range(max(len(my_prev), len(opp_prev))):
-        white_move = my_prev[index] if index < len(my_prev) else ""
-        black_move = opp_prev[index] if index < len(opp_prev) else ""
+        if color == "white":
+            white_move = my_prev[index] if index < len(my_prev) else ""
+            black_move = opp_prev[index] if index < len(opp_prev) else ""
+        else:
+            white_move = opp_prev[index] if index < len(opp_prev) else ""
+            black_move = my_prev[index] if index < len(my_prev) else ""
         move_number = index + 1
         if white_move and black_move:
             history.append(f"{move_number}. {white_move} {black_move}")

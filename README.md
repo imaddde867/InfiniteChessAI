@@ -39,6 +39,8 @@ construction.
 ├── main.ipynb              # Exploratory notebook that informed the script
 ├── sft_data.jsonl          # Example supervised dataset
 ├── requirements.txt        # Python dependencies for scripts/server
+├── requirements-dev.txt    # Development extras (pytest, etc.)
+├── tests/                  # Python unit tests for the data tooling
 └── README.md
 ```
 
@@ -51,8 +53,10 @@ construction.
 ```bash
 python -m venv .env
 source .env/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt  # includes runtime + pytest for tests
 ```
+
+If you only need the runtime dependencies (no tests), install with `-r requirements.txt`.
 
 ### 2. Generate a supervised dataset
 
@@ -77,6 +81,14 @@ state to `/ai-move`. The mock server responds with random legal SAN moves.
 Open `ChessAI.xcodeproj` in Xcode (17+) and run the **ChessAI** scheme on an
 iOS 17 simulator or device. Ensure the mock server is running for AI moves.
 
+### 5. Run Python unit tests (optional)
+
+```bash
+pytest
+```
+
+The suite currently covers the Chess.com dataset pipeline, guarding against
+regressions in move history alignment and JSONL generation.
 ---
 
 ## Vision & next phases
